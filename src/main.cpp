@@ -3,10 +3,9 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include "Eigen-3.3/Eigen/Core"
-#include "Eigen-3.3/Eigen/QR"
 #include "helpers.h"
 #include "json.hpp"
+#include "Planner.h"
 
 // for convenience
 using nlohmann::json;
@@ -50,8 +49,11 @@ int main() {
     map_waypoints_dy.push_back(d_y);
   }
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
-               &map_waypoints_dx,&map_waypoints_dy]
+  Planner planner;
+  planner.setMapData( {map_waypoints_x, map_waypoints_y, map_waypoints_s, map_waypoints_dx, map_waypoints_dy, max_s} );
+  planner.setSpeedLimitMPH(50.0 * 0.83);
+
+  h.onMessage([&planner]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -93,11 +95,12 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
-          /**
-           * TODO: define a path made up of (x,y) points that the car will visit
-           *   sequentially every .02 seconds
-           */
+          std::cout << j[1].dump(2) << std::endl;
 
+          planner.updateCarLocalization(car_x, car_y, car_s, car_d, car_yaw, car_speed);
+          planner.updatePreviousPath(previous_path_x, previous_path_y);
+          planner.updateSensorFusion(sensor_fusion);
+          planner.suggestPath(next_x_vals, next_y_vals);
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
