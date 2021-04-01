@@ -34,9 +34,16 @@ constexpr double pi() { return M_PI; }
 inline double deg2rad(double x) { return x * pi() / 180; }
 inline double rad2deg(double x) { return x * 180 / pi(); }
 
+// Calculate squared distance between two points
+inline double distance_squared(double x1, double y1, double x2, double y2) {
+  const double x_diff = (x2-x1);
+  const double y_diff = (y2-y1);
+  return x_diff*x_diff+y_diff*y_diff;
+}
+
 // Calculate distance between two points
 inline double distance(double x1, double y1, double x2, double y2) {
-  return sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
+  return sqrt(distance_squared(x1, y1, x2, y2));
 }
 
 // Calculate closest waypoint to current x, y position
