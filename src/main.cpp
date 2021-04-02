@@ -51,7 +51,7 @@ int main() {
 
   Planner planner;
   planner.setMapData(map_waypoints_x, map_waypoints_y, map_waypoints_s, max_s);
-  planner.setSpeedLimitMPH(50.0 * 0.91);
+  planner.setSpeedLimitMPH(45.0);
 
   h.onMessage([&planner]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,

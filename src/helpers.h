@@ -1,13 +1,121 @@
 #ifndef HELPERS_H
 #define HELPERS_H
 
-#include <math.h>
+#include <cmath>
 #include <string>
 #include <vector>
+#include <Eigen/Core>
+#include <Eigen/Dense>
 
 // for convenience
 using std::string;
 using std::vector;
+using Eigen::VectorXd;
+using Eigen::MatrixXd;
+
+/**
+ * Conversion from miles-per-hour to meter-per-second.
+ *
+ * @param mph speed in miles-per-hour.
+ * @return speed in meters-per-second
+ */
+constexpr double mph_to_ms(double mph)
+{
+  return mph * 1609.34 / 3600.0;
+}
+
+/**
+ * Calculate the Jerk Minimizing Trajectory that connects the initial state
+ * to the final state in time T.
+ *
+ * @param start - the vehicles start location given as a length three array
+ *   corresponding to initial values of [s, s_dot, s_double_dot]
+ * @param end - the desired end state for vehicle. Like "start" this is a
+ *   length three array.
+ * @param T - The duration, in seconds, over which this maneuver should occur.
+ *
+ * @return an array of length 6, each value corresponding to a coefficent in
+ *   the polynomial:
+ *   s(t) = a_0 + a_1 * t + a_2 * t**2 + a_3 * t**3 + a_4 * t**4 + a_5 * t**5
+ */
+inline vector<double> jmt(const vector<double>& start, const vector<double>& end, double T)
+{
+  VectorXd alpha_012(3);
+  alpha_012 << start[0], start[1], 0.5*start[2];
+
+  VectorXd s_diff(3);
+  s_diff << end[0] - (start[0] + start[1]*T + 0.5*start[2]*T*T),
+            end[1] - (start[1] + start[2]*T),
+            end[2] - start[2];
+
+  MatrixXd matrix_t(3, 3);
+  matrix_t << T*T*T,   T*T*T*T,   T*T*T*T*T,
+              3.0*T*T, 4.0*T*T*T, 5.0*T*T*T*T,
+              6.0*T,   12.0*T*T,  20.0*T*T*T;
+
+  const VectorXd alpha_345 = matrix_t.inverse() * s_diff;
+
+  return {alpha_012(0), alpha_012(1), alpha_012(2), alpha_345(0), alpha_345(1), alpha_345(2)};
+}
+
+/**
+ * Check if two floating point numbers are equal within a given precision.
+ * @tparam T Floating point type.
+ * @param a 1st number.
+ * @param b 2nd number.
+ * @param epsilon Precision.
+ * @return True if 'a' and 'b' are within epsilon.
+ */
+template<class T>
+constexpr bool essentially_equal(T a, T b, T epsilon)
+{
+    return fabs(a - b) <= ( (fabs(a) > fabs(b) ? fabs(b) : fabs(a)) * epsilon);
+}
+
+/**
+ * Calculate a polynomial.
+ * @param x Parameter value.
+ * @param coeff Array of polynomial coefficients.
+ * @return
+ */
+inline double polynom(double x, const vector<double>& coeff)
+{
+  if (coeff.size() < 1) {
+    return 0.0;
+  }
+
+  double y = coeff[0];
+  double x_p = 1.0;
+  for (size_t i = 1; i < coeff.size(); i++) {
+    x_p *= x;
+    y += coeff[i] * x_p;
+  }
+
+  return y;
+}
+
+/**
+ * Calculate the first derivative of a polynomial.
+ * @param x Parameter value.
+ * @param coeff Array of polynomial coefficients.
+ * @return
+ */
+inline double polynom_gradient(double x, const vector<double>& coeff)
+{
+  if (coeff.size() < 2) {
+    return 0.0;
+  }
+
+  double y = coeff[1];
+  double x_p = 1.0;
+  for (size_t i = 2; i < coeff.size(); i++) {
+    x_p *= x;
+    y += coeff[i] * i * x_p;
+  }
+
+  return y;
+}
+
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
