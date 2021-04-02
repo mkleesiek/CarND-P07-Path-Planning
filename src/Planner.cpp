@@ -85,16 +85,24 @@ namespace {
   }
 
   template<class T>
-  constexpr bool essentiallyEqual(T a, T b, T epsilon)
+  constexpr bool essentially_equal(T a, T b, T epsilon)
   {
       return fabs(a - b) <= ( (fabs(a) > fabs(b) ? fabs(b) : fabs(a)) * epsilon);
   }
 }
 
+void Planner::reset()
+{
+  m_current_state = CarState{};
+  m_other_cars.clear();
+  m_planned_waypoints.clear();
+  m_planned_path.clear();
+}
+
 void Planner::setMapData(const vector<double>& map_x, const vector<double>& map_y, const vector<double>& map_s,
   double max_s)
 {
-  constexpr double max_waypoint_distance = 5.0;
+  constexpr double max_waypoint_distance = 2.0;
 
   m_map = Map{};
 
@@ -175,80 +183,51 @@ void Planner::updateSensorFusion(const vector<vector<double>>& sensor_data)
 
   for (const auto& dataSet : sensor_data)
   {
-    const int id = (int) dataSet[0];
     const double s = dataSet[5];
     const double d = dataSet[6];
+
+    // approximate frenet velocities from heading and cartesian velocities
     const double heading = atan2(dataSet[4], dataSet[3]);
     const auto sd_2 = getFrenet(dataSet[1] + dataSet[3] * 1.0, dataSet[2] + dataSet[4] * 1.0, heading);
     const double s_dot = sd_2.first - s / 1.0;
     const double d_dot = sd_2.second - d / 1.0;
 
-    m_other_cars.push_back(CarState{/*dataSet[1], dataSet[2], */s, d, s_dot, d_dot});
+    m_other_cars.push_back(CarState{s, d, s_dot, d_dot, m_current_state.t});
   }
 }
 
 void Planner::planTrajectory(vector<double> &next_x, vector<double> &next_y)
 {
-  const double look_ahead = 15.0;
-
   // condition for a clean start
-  if (m_planned_waypoints.empty()) {
+  if (m_planned_waypoints.empty() || essentially_equal(m_current_state.t, 0.0, 1E-4)) {
+    m_planned_waypoints.clear();
     m_current_state.t = 0.0;
     m_planned_waypoints.push_back(m_current_state);
   }
 
-  for (auto it = m_planned_waypoints.cbegin(); it != m_planned_waypoints.cend();) {
-    auto next = it + 1;
-    if (next != m_planned_waypoints.cend() && next->t < m_current_state.t - m_buffer) {
-      it = m_planned_waypoints.erase(it);
-      cout << "clearing obsolete waypoint" << endl;
-      continue;
-    }
-    else if (it->t > m_current_state.t + m_buffer) {
-      it = m_planned_waypoints.erase(it);
-      cout << "clearing future waypoint" << endl;
-      continue;
-    }
-
-    it++;
+  // remove previous waypoints which have past
+  while (m_planned_waypoints.size() > 3 && m_planned_waypoints[3].t < m_current_state.t - m_buffer) {
+    m_planned_waypoints.pop_front();
   }
 
-  while (m_planned_waypoints.size() < 5 || m_planned_waypoints.back().t < m_current_state.t + m_buffer + look_ahead) {
+  // remove previous waypoints lying too far in the future
+  while (m_planned_waypoints.size() > 2 && m_planned_waypoints[m_planned_waypoints.size()-2].t > m_current_state.t + m_buffer) {
+    m_planned_waypoints.pop_back();
+  }
+
+  // keep suggesting and adding new waypoints until the lookahead buffer time is filled
+  while (m_planned_waypoints.size() < 5 || m_planned_waypoints.back().t < m_current_state.t + m_buffer + m_look_ahead) {
     CarState next_state = suggestNextWaypoint(m_planned_waypoints.back());
     m_planned_waypoints.push_back(next_state);
-    cout << "adding new waypoint" << endl;
+//    cout << "adding new waypoint" << endl;
   }
 
-  deque<CarState> planned_jerkfree = m_planned_waypoints;
+  // generate an interpolated jerk-free trajectory from the suggested waypoints
+  auto planned_jerkfree = generateJerkfreeTrajectory(m_planned_waypoints);
 
-//  vector<CarState> planned_jerkfree;
-//  planned_jerkfree.push_back(m_planned_states.front());
-//
-//  for (size_t i = 1; i < m_planned_states.size(); i++) {
-//
-//    auto& last_state = m_planned_states[i-1];
-//    auto& next_state = m_planned_states[i];
-//
-//    const double traj_duration = next_state.t - last_state.t;
-//    const auto coeff_s = jmt({last_state.s, last_state.s_dot, 0.0}, {next_state.s, next_state.s_dot, 0.0}, traj_duration);
-//    const auto coeff_d = jmt({last_state.d, last_state.d_dot, 0.0}, {next_state.d, next_state.d_dot, 0.0}, traj_duration);
-//
-//    if (next_state.s_dot == 0.0) {
-//      cout << "s_dot: " << last_state.s_dot << "-> " << next_state.s_dot << endl;
-//    }
-//
-//    const size_t jmt_iterations = max<size_t>(2, traj_duration / 0.5);
-//
-//    for (size_t k = 0; k < jmt_iterations; k++) {
-//      const double dt = traj_duration * (k + 1) / jmt_iterations;
-//      next_state.t = last_state.t + dt;
-//      next_state.s = polynom(dt, coeff_s);
-//      next_state.s_dot = polynom_gradient(dt, coeff_s);
-//      next_state.d = polynom(dt, coeff_d);
-//      next_state.d_dot = polynom_gradient(dt, coeff_d);
-//
-//      planned_jerkfree.push_back(next_state);
-//    }
+//  // normalize s coordinates
+//  for (auto& waypoint : m_planned_waypoints) {
+//    waypoint.s = normalize_s(waypoint.s);
 //  }
 
   // collect x/y points for constructing a C-spline
@@ -263,180 +242,177 @@ void Planner::planTrajectory(vector<double> &next_x, vector<double> &next_y)
   }
 
   // create C-splines for x and y coordinates
-  tk::spline sx(t_vals, x_vals);
-  tk::spline sy(t_vals, y_vals);
+  tk::spline sx(t_vals, x_vals, tk::spline::cspline_hermite);
+  tk::spline sy(t_vals, y_vals, tk::spline::cspline_hermite);
 
   // use the splines to construct the actual x/y path in 0.02s increments,
   // return those values and store a copy in 'm_planned_path'.
   m_planned_path.clear();
 
-  const double planned_duration = t_vals.back() - max(0.0, t_vals.front());
+  const double planned_duration = t_vals.back() - t_vals.front();
   const size_t n_interpolated = planned_duration / m_update_interval;
 
-  for (size_t i = 0; i <= n_interpolated; i++) {
-    double t = planned_duration * i / n_interpolated;
+  for (long i = 0; i <= n_interpolated; i++) {
+
+    const double t = t_vals.front() + planned_duration * i / n_interpolated;
 
     // skip values lying before the current car state
-    if (t < m_current_state.t + 1E-4) {
+    if (t < m_current_state.t + m_update_interval/2.0) {
       continue;
     }
 
-    const PathPoint p{sx(t), sy(t), t};
+    PathPoint p{sx(t), sy(t), t};
+
     next_x.push_back(p.x);
     next_y.push_back(p.y);
     m_planned_path.push_back(std::move(p));
   }
+}
 
-  cout << "next_x.size(): " << next_x.size() << endl;
+vector<Planner::CarState> Planner::generateJerkfreeTrajectory(const deque<CarState>& waypoints) const
+{
+  vector<CarState> jerkfree_traj;
+  jerkfree_traj.push_back(waypoints.front());
 
+  for (size_t i = 1; i < waypoints.size(); i++) {
 
-//  size_t n_interpolated = t_planned / m_update_interval;
-//
-//  for (size_t i = 0; i < n_interpolated; i++) {
-//    double t = t_planned * (i+1) / n_interpolated;
-//
-//    double x = sx(t);
-//    double y = sy(t);
-//
-//    if (i > 0) {
-//      double speed = distance(next_x[i-1], next_y[i-1], x, y) / m_update_interval;
-//
-////      // check if the speed limit has been violated in this segment and correct if necessary
-////      while (speed > 50.0) {
-////        t -= 0.05*m_update_interval;
-////        x = sx(t);
-////        y = sy(t);
-////        speed = distance(next_x[i-1], next_y[i-1], x, y) / m_update_interval;
-////      }
-//
-////      // check the acceleration
-////      if (i > 2) {
-////        const double speed_prev = distance(next_x[i - 2], next_y[i - 2], next_x[i - 1], next_y[i - 1]) / m_update_interval;
-////        double accel = (speed - speed_prev) / m_update_interval;
-////
-////        while (accel > 10.0) {
-////          t -= 0.05*m_update_interval;
-////          x = sx(t);
-////          y = sy(t);
-////          speed = distance(next_x[i-1], next_y[i-1], x, y) / m_update_interval;
-////          accel = (speed - speed_prev) / m_update_interval;
-////        }
-////        while (accel < -10.0) {
-////          t += 0.05*m_update_interval;
-////          x = sx(t);
-////          y = sy(t);
-////          speed = distance(next_x[i-1], next_y[i-1], x, y) / m_update_interval;
-////          accel = (speed - speed_prev) / m_update_interval;
-////        }
-////      }
-//    }
-//
-//    next_x.push_back(x);
-//    next_y.push_back(y);
-//  }
+    const auto& last_state = waypoints[i-1];
+    auto next_state = waypoints[i];
+
+    const double traj_duration = next_state.t - last_state.t;
+    const auto coeff_s = jmt({last_state.s, last_state.s_dot, 0.0}, {next_state.s, next_state.s_dot, 0.0}, traj_duration);
+    const auto coeff_d = jmt({last_state.d, last_state.d_dot, 0.0}, {next_state.d, next_state.d_dot, 0.0}, traj_duration);
+
+    const size_t jmt_iterations = max<size_t>(2, traj_duration / (m_update_interval * 10.0));
+
+    for (size_t k = 0; k < jmt_iterations; k++) {
+      const double dt = traj_duration * (k + 1) / jmt_iterations;
+      CarState inter_state{
+        polynom(dt, coeff_s),
+        polynom(dt, coeff_d),
+        polynom_gradient(dt, coeff_s),
+        polynom_gradient(dt, coeff_d),
+        last_state.t + dt
+      };
+      jerkfree_traj.push_back(inter_state);
+    }
+  }
+
+  return jerkfree_traj;
 }
 
 Planner::CarState Planner::suggestNextWaypoint(const CarState& previous) const
 {
-  int current_lane = getLane(previous.d);
+  // segment duration when staying in same lane
+  constexpr double dt_straight = 2.0;
+  // segment duration for a lane change
+  constexpr double dt_lanechange = 3.0;
+
+  const int current_lane = getLane(previous.d);
 
   CarState next_straight{};
-  double dt = 1.0;
-  next_straight.t = previous.t + dt;
-  next_straight.s_dot = min(previous.s_dot + m_max_accel * dt, m_speedLimit);
-  next_straight.s = previous.s + (next_straight.s_dot + previous.s_dot) / 2.0 * dt;
+  next_straight.t = previous.t + dt_straight;
+  next_straight.s_dot = min(previous.s_dot + m_max_accel * dt_straight, m_speedLimit);
+  next_straight.s = previous.s + (next_straight.s_dot + previous.s_dot) / 2.0 * dt_straight;
   next_straight.d = getD(current_lane);
+  auto collision_straight = checkCollision(previous, next_straight);
 
   CarState next_left{};
-  dt = 2.5;
-  next_left.t += previous.t + dt;
-  next_left.s_dot = min(previous.s_dot + m_max_accel / 2.0 * dt, m_speedLimit);
-  next_left.s = previous.s + (next_left.s_dot + previous.s_dot) / 2.0 * dt;
+  next_left.t += previous.t + dt_lanechange;
+  next_left.s_dot = min(previous.s_dot + m_max_accel / 2.0 * dt_lanechange, m_speedLimit);
+  next_left.s = previous.s + (next_left.s_dot + previous.s_dot) / 2.0 * dt_lanechange;
   next_left.d = getD(current_lane - 1);
+  auto collision_left = checkCollision(previous, next_left);
 
-  CarState next_right{};
-  dt = 2.5;
-  next_right.t += previous.t + dt;
-  next_right.s_dot = min(previous.s_dot + m_max_accel / 2.0 * dt, m_speedLimit);
-  next_right.s = previous.s + (next_right.s_dot + previous.s_dot) / 2.0 * dt;
+  CarState next_right{next_left};
   next_right.d = getD(current_lane + 1);
+  auto collision_right = checkCollision(previous, next_right);
 
   // Evaluate multiple trajectories:
   // 1) if we are on an outer lane, consider changing
-
-  if (current_lane == m_lanes-1) {
-    const auto collision = checkCollision(next_left);
-    if (!collision.first) {
-      return next_left;
-    }
+  if (current_lane == m_lanes-1 && !collision_left.first) {
+    return next_left;
   }
-  else if (current_lane == 0) {
-    const auto collision = checkCollision(next_right);
-    if (!collision.first) {
-      return next_right;
-    }
+  else if (current_lane == 0 && !collision_right.first) {
+    return next_right;
   }
 
-  // 2) keep current lane otherwise
-
-  const auto my_lane_collision = checkCollision(next_straight);
-  // check option 2) for collisions
-  if (!my_lane_collision.first || my_lane_collision.second.s < previous.s) {
+  // 2) keep current lane otherwise,
+  //    or if we have just gotten off the start
+  if (!collision_straight.first || previous.t < 5.0) {
     return next_straight;
   }
 
   // 3) we'd have to slow down in order not to collide, so consider changing lanes
 
-  // check right-hand lane
-  if (current_lane < m_lanes-1) {
-    const auto right_lane_collision = checkCollision(next_right);
-    if (!right_lane_collision.first) {
-      return next_right;
-    }
-  }
   // check left-hand lane
-  if (current_lane > 0) {
-    const auto left_lane_collision = checkCollision(next_left);
-    if (!left_lane_collision.first) {
-      return next_left;
-    }
+  if (current_lane > 0 && !collision_left.first) {
+    return next_left;
+  }
+  // check right-hand lane
+  else if (current_lane < m_lanes-1 && !collision_right.first) {
+    return next_right;
   }
 
-  // 4) we can't change langes right now and have to reduce speed to avoid collision,
-  //    adjust distance and speed to follow the car ahead:
 
-  const double projected_s = my_lane_collision.second.s + my_lane_collision.second.s_dot * next_straight.t;
-//  next_straight.s = min(next_straight.s, projected_s - m_distance_to_others);
-//  next_straight.s_dot = (next_straight.s - previous.s) * 2.0 / dt - previous.s_dot;
+  // 4) we can't change langes right now and have to reduce speed to avoid collision
 
-  next_straight.s_dot = min(next_straight.s_dot, my_lane_collision.second.s_dot * 0.9);
-  next_straight.s_dot = max(previous.s_dot - m_max_accel * dt, next_straight.s_dot);
-
-  next_straight.s = previous.s + (next_straight.s_dot + previous.s_dot) / 2.0 * dt;
+  // adjust to the spped of the car in front
+  next_straight.s_dot = min(next_straight.s_dot, collision_straight.second * 0.9);
+  // but don't exceed the (negative) acceleration limit
+  next_straight.s_dot = max(previous.s_dot - m_max_accel * dt_straight, next_straight.s_dot);
+  // estimate distance based on target velocity
+  next_straight.s = previous.s + (next_straight.s_dot + previous.s_dot) / 2.0 * dt_straight;
 
   return next_straight;
 }
 
-pair<bool, Planner::CarState> Planner::checkCollision(const CarState& my_car) const
+pair<bool, double> Planner::checkCollision(const CarState& me_current, const CarState& me_next) const
 {
-  const int my_lane = getLane(my_car.d);
+  const int my_lane_now = getLane(me_current.d);
+  const int my_lane_next = getLane(me_next.d);
 
   double min_distance = m_distance_to_others;
   CarState candidate{};
 
   for (const auto& other : m_other_cars) {
-    if (my_lane == getLane(other.d)) {
-      // extrapolate the other car position in the future (my_car time)
-      const double s_other = other.s + other.s_dot * (my_car.t - other.t);
-      const double distance = fabs(my_car.s - s_other);
-      if (distance < min_distance) {
+
+    const int others_lane = getLane(other.d);
+
+    // skip vehicles which will not be on my lane
+    if (my_lane_next != others_lane) {
+      continue;
+    }
+
+    // skip other vehicles which are right behind me on my lane!
+    if (others_lane == my_lane_now && me_current.t >= other.t && normalize_s(me_current.s) > other.s) {
+      continue;
+    }
+
+    // extrapolate the other car position to my next one
+    double s_other = other.s + other.s_dot * (me_next.t - other.t);
+    double distance_next = s_other - normalize_s(me_next.s);
+
+    // check for collision on my next state
+    if (fabs(distance_next) < min_distance) {
+      candidate = other;
+      min_distance = fabs(distance_next);
+    }
+
+    // extrapolate the other car position to my current one, if on the same lane and ahead
+    if (my_lane_now == my_lane_next) {
+      s_other = other.s + other.s_dot * (me_current.t - other.t);
+      const double distance_current = s_other - normalize_s(me_current.s);
+
+      // check for collision on my current state
+      if (distance_current > 0.0 && distance_current < min_distance) {
         candidate = other;
-        min_distance = distance;
+        min_distance = distance_current;
       }
     }
   }
 
-  return {(min_distance < m_distance_to_others), candidate};
+  return {(min_distance < m_distance_to_others), candidate.s_dot};
 }
 
 pair<double, double> Planner::getFrenet(double x, double y, double theta) const
@@ -447,8 +423,14 @@ pair<double, double> Planner::getFrenet(double x, double y, double theta) const
 
 pair<double, double> Planner::getXY(double s, double d) const
 {
+  s = fmod(s, m_map.max_s);
   const auto xy = ::getXY(s, d, m_map.waypoints_s, m_map.waypoints_x, m_map.waypoints_y);
   return make_pair(xy[0], xy[1]);
+}
+
+double Planner::normalize_s(double s) const
+{
+  return fmod(s, m_map.max_s);
 }
 
 int Planner::getLane(double d) const

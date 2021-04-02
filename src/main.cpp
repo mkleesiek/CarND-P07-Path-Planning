@@ -51,7 +51,7 @@ int main() {
 
   Planner planner;
   planner.setMapData(map_waypoints_x, map_waypoints_y, map_waypoints_s, max_s);
-  planner.setSpeedLimitMPH(50.0 * 0.95);
+  planner.setSpeedLimitMPH(50.0 * 0.91);
 
   h.onMessage([&planner]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
@@ -96,7 +96,7 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
-//          std::cout << j[1].dump(2) << std::endl;
+//          std::cout << car_x << ", " << car_y << std::endl;
 
           planner.updateCarLocalization(car_x, car_y, car_s, car_d, car_yaw, car_speed);
           planner.updateSensorFusion(sensor_fusion);
@@ -104,6 +104,8 @@ int main() {
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
+
+//          std::cout << msgJson["next_x"] << std::endl << msgJson["next_y"] << std::endl;
 
           auto msg = "42[\"control\","+ msgJson.dump()+"]";
 

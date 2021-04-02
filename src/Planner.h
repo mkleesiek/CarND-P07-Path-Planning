@@ -28,6 +28,8 @@ public:
     double t;
   };
 
+  void reset();
+
   void setMapData(const std::vector<double>& map_x, const std::vector<double>& map_y, const std::vector<double>& map_s,
     double max_s);
   void setSpeedLimitMPH(double mph);
@@ -39,29 +41,30 @@ public:
 
 private:
   CarState suggestNextWaypoint(const CarState& previous) const;
-  std::pair<bool, CarState> checkCollision(const CarState& my_car) const;
+  std::vector<CarState> generateJerkfreeTrajectory(const std::deque<CarState>& waypoints) const;
+  std::pair<bool, double> checkCollision(const CarState& me_current, const CarState& me_next) const;
 
   std::pair<double, double> getFrenet(double x, double y, double theta) const;
   std::pair<double, double> getXY(double s, double d) const;
-
+  double normalize_s(double s) const;
   int getLane(double d) const;
   double getD(int lane) const;
 
   /// Map data
   Map m_map;
   /// Speed limit in m/s
-  double m_speedLimit;
+  double m_speedLimit = 10.0;
 
   int m_lanes = 3;
   double m_lane_width = 4.0;
 
   double m_update_interval = 0.02;
-  double m_max_accel = 3.0;
+  double m_max_accel = 6.0;
 
-//  double m_trajectory_interval = 2.5;
-  double m_buffer = 0.5;
+  double m_look_ahead = 3.0;
+  double m_buffer = 1.0;
 
-  double m_distance_to_others = 35.0;
+  double m_distance_to_others = 30.0;
 
   CarState m_current_state = CarState{};
   std::vector<CarState> m_other_cars;
