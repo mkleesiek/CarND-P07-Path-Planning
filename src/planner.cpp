@@ -1,5 +1,5 @@
 #include <iostream>
-#include "Planner.h"
+#include "planner.h"
 #include "helpers.h"
 #include "spline.h"
 
@@ -118,10 +118,8 @@ void Planner::planTrajectory(vector<double> &next_x, vector<double> &next_y)
   // 1st waypoints for a clean start
   if (m_planned_waypoints.empty() || essentially_equal(m_current_state.t, 0.0, 1E-4)) {
     m_planned_waypoints.clear();
-    for (int i = -3; i <= 0; i++) {
-      m_current_state.t = i;
-      m_planned_waypoints.push_back(m_current_state);
-    }
+    m_current_state.t = 0.0;
+    m_planned_waypoints.push_back(m_current_state);
   }
 
   // remove previous waypoints which have past
@@ -155,6 +153,7 @@ void Planner::planTrajectory(vector<double> &next_x, vector<double> &next_y)
   }
 
   // create C-splines for x and y coordinates
+  // we are using C^1 Hermite splines, since updates to the path 2 segments away have no global impact
   tk::spline sx(t_vals, x_vals, tk::spline::cspline_hermite);
   tk::spline sy(t_vals, y_vals, tk::spline::cspline_hermite);
 
@@ -222,31 +221,32 @@ vector<Planner::CarState> Planner::generateJerkMinimizingTrajectory(const deque<
 
 Planner::CarState Planner::suggestNextWaypoint(const CarState& previous) const
 {
-  // segment duration when staying in same lane
-  constexpr double dt_straight = 1.5;
-  // segment duration for a lane change
-  constexpr double dt_lanechange = 3.0;
-
-  // max acceleration while going straight
-  constexpr double accel_straight = 4.0;
-  // max acceleration during lane changes
-  constexpr double accel_lanechange = 2.0;
-
   const int current_lane = getLane(previous.d);
 
-  // prepare trajectories for going straight and changing to the left/right lane
+  // if we are starting, accelerate straight for 5 seconds
+  if (previous.t < 1.0) {
+    CarState next_start{};
+    next_start.t = 5.0;
+    next_start.s_dot = min(5.0 * next_start.t, m_speedLimit);
+    next_start.s = previous.s + next_start.s_dot / 2.0 * next_start.t;
+    next_start.d = getD(current_lane);
+    return next_start;
+  }
+
+  // 0) prepare trajectories for going straight and changing to the left/right lane
 
   CarState next_straight{};
-  next_straight.t = previous.t + dt_straight;
-  next_straight.s_dot = min(previous.s_dot + accel_straight * dt_straight, m_speedLimit);
-  next_straight.s = previous.s + (next_straight.s_dot + previous.s_dot) / 2.0 * dt_straight;
+  next_straight.t = previous.t + m_dt_straight;
+  next_straight.s_dot = min(previous.s_dot + m_max_accel * m_dt_straight, m_speedLimit);
+  next_straight.s = previous.s + (next_straight.s_dot + previous.s_dot) / 2.0 * m_dt_straight;
   next_straight.d = getD(current_lane);
   auto collision_straight = checkCollision(previous, next_straight);
 
   CarState next_left{};
-  next_left.t += previous.t + dt_lanechange;
-  next_left.s_dot = min(previous.s_dot + accel_lanechange * dt_lanechange, m_speedLimit * 0.95);
-  next_left.s = previous.s + (next_left.s_dot + previous.s_dot) / 2.0 * dt_lanechange;
+  next_left.t += previous.t + m_dt_lanechange;
+  // reduce target speed and maximum long. acceleration during lane change
+  next_left.s_dot = min(previous.s_dot + (m_max_accel * 0.5) * m_dt_lanechange, m_speedLimit * 0.95);
+  next_left.s = previous.s + (next_left.s_dot + previous.s_dot) / 2.0 * m_dt_lanechange;
   next_left.d = getD(current_lane - 1);
   auto collision_left = checkCollision(previous, next_left);
 
@@ -256,6 +256,7 @@ Planner::CarState Planner::suggestNextWaypoint(const CarState& previous) const
 
   // Evaluate multiple trajectories:
   // 1) if we are on an outer lane, consider changing
+
   if (current_lane == m_lanes-1 && !collision_left.first) {
     return next_left;
   }
@@ -263,13 +264,14 @@ Planner::CarState Planner::suggestNextWaypoint(const CarState& previous) const
     return next_right;
   }
 
-  // 2) keep current lane otherwise,
-  //    or if we have just gotten off the start
+  // 2) keep current lane otherwise (so collision, no slowing down)
+
   if (!collision_straight.first) {
     return next_straight;
   }
 
-  // 3) we'd have to slow down in order not to collide, so consider changing lanes
+  // 3) if there is a vehicle ahead on the same lane we'd have to slow down in order not to collide,
+  //    so consider changing lanes
 
   // check left-hand lane
   if (!collision_left.first) {
@@ -280,13 +282,14 @@ Planner::CarState Planner::suggestNextWaypoint(const CarState& previous) const
     return next_right;
   }
 
-  // 4) we can't change langes right now and have to reduce speed to avoid collision
+  // 4) we can't change lanes right now and have to reduce speed to avoid collision
+
   // adjust to the speed of the car in front
   next_straight.s_dot = min(next_straight.s_dot, collision_straight.second * 0.9);
   // but don't exceed the (negative) acceleration limit
-  next_straight.s_dot = max(previous.s_dot - accel_straight * dt_straight, next_straight.s_dot);
+  next_straight.s_dot = max(previous.s_dot - m_max_accel * m_dt_straight, next_straight.s_dot);
   // estimate distance based on target velocity
-  next_straight.s = previous.s + (next_straight.s_dot + previous.s_dot) / 2.0 * dt_straight;
+  next_straight.s = previous.s + (next_straight.s_dot + previous.s_dot) / 2.0 * m_dt_straight;
 
   return next_straight;
 }
@@ -327,18 +330,6 @@ pair<bool, double> Planner::checkCollision(const CarState& me_current, const Car
       || (distance_next < 0.0 && distance_next * -2.0 < min_distance)) {
       candidate = other;
       min_distance = fabs(distance_next);
-    }
-
-    // extrapolate the other car position to my current one, if on the same lane and ahead
-    if (my_lane_now == my_lane_next) {
-      s_other = other.s + other.s_dot * (me_current.t - other.t);
-      const double distance_current = distance_s(s_other, me_current.s);
-
-      // check for collision on my current state
-      if (distance_current >= 0.0 && distance_current < min_distance) {
-        candidate = other;
-        min_distance = distance_current;
-      }
     }
   }
 

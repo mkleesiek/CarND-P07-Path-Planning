@@ -5,7 +5,7 @@
 #include <vector>
 #include "helpers.h"
 #include "json.hpp"
-#include "Planner.h"
+#include "planner.h"
 
 // for convenience
 using nlohmann::json;

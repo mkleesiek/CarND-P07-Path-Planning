@@ -13,7 +13,7 @@
  */
 class Planner {
 public:
-  /// Holding coordinates of the simulator track, allowing conversion between cartesian and frenet coordinates.
+  /// Holding coordinates of the simulator track, allowing conversion between Cartesian and Frenet coordinates.
   struct Map {
     std::vector<double> waypoints_x;
     std::vector<double> waypoints_y;
@@ -114,6 +114,14 @@ private:
   double m_buffer = 0.5;
   /// minimum distance to other vehicels in m
   double m_distance_to_others = 30.0;
+
+  /// segment duration when staying in same lane
+  double m_dt_straight = 1.5;
+  /// segment duration for a lane change
+  double m_dt_lanechange = 3.0;
+
+  /// max acceleration while going straight
+  double m_max_accel = 4.0;
 
   /// Map data
   Map m_map{};

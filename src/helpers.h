@@ -116,6 +116,9 @@ inline double polynom_gradient(double x, const vector<double>& coeff)
   return y;
 }
 
+//
+// Helper functions provided by Udacity down below:
+//
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -139,8 +142,8 @@ inline string hasData(string s) {
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
-inline double deg2rad(double x) { return x * pi() / 180; }
-inline double rad2deg(double x) { return x * 180 / pi(); }
+constexpr double deg2rad(double x) { return x * pi() / 180; }
+constexpr double rad2deg(double x) { return x * 180 / pi(); }
 
 // Calculate squared distance between two points
 inline double distance_squared(double x1, double y1, double x2, double y2) {
