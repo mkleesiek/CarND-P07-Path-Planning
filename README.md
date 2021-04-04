@@ -4,13 +4,9 @@
 In this project of the Udacity [Self-Driving Car NanoDegree](https://www.udacity.com/course/self-driving-car-engineer-nanodegree--nd013) program, I implement a path planning algorithm which will safely navigate a vehicle around a virtual highway with other traffic.
 
 <p align="middle">
-   <img src="screenshots/simulator-01.jpg" width="240" />
-   <img src="screenshots/simulator-02.jpg" width="240" />
-   <img src="screenshots/simulator-03.jpg" width="240" />
-   <img src="screenshots/simulator-04.jpg" width="240" />
-   <img src="screenshots/simulator-05.jpg" width="240" />
-   <img src="screenshots/simulator-06.jpg" width="240" />
-   <img src="screenshots/simulator-07.jpg" width="240" />
+   <img src="screenshots/simulator-01.jpg" height="180" />
+   <img src="screenshots/simulator-05.jpg" height="180" />
+   <img src="screenshots/simulator-06.jpg" height="180" />
 <p/>
 
 The Udacity [simulator tool](https://github.com/udacity/self-driving-car-sim/releases/tag/T3_v1.2) provides a virtual highway, a 6946m loop, with traffic that is driving +-10 MPH of the simulator's 50 MPH speed limit. Using the car's localization and sensor fusion data provided by the simulator, the path planner will generate and communicate a trajectory for the user's vehicle to the simulator. The trajectory enables the car to navigate close to the speed limit by changing lanes when slower traffic ahead gives reason to do so. The path planner will avoid collisions and react to other traffic changing speed or changing lanes. Our own vehicle will stay on center of one of the valid 3 lanes and avoid total acceleration over 10 m/s^2 and jerk that is greater than 10 m/s^3.
@@ -67,4 +63,3 @@ For more details, please refer to the documented source code in [planner.h](src/
 
 ## License
 The contents of this repository are covered under the [MIT License](LICENSE).
-
